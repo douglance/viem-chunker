@@ -1,6 +1,6 @@
 {
   "name": "viem-chunker",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Chunked, retrying block range actions for viem clients.",
   "type": "module",
   "license": "MIT",

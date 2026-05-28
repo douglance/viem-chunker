@@ -17,7 +17,9 @@ export function resolveChunkPolicy(policy: Partial<ChunkPolicy> | undefined): Ch
   if (resolved.maxSize < resolved.initialSize) {
     throw new Error("chunk.maxSize must be greater than or equal to chunk.initialSize");
   }
-  if (resolved.growthFactor < 1) throw new Error("chunk.growthFactor must be at least 1");
+  if (!Number.isFinite(resolved.growthFactor) || resolved.growthFactor < 1) {
+    throw new Error("chunk.growthFactor must be a finite number at least 1");
+  }
 
   return resolved;
 }

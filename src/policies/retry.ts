@@ -10,12 +10,23 @@ export const defaultRetryPolicy: RetryPolicy = {
 export function resolveRetryPolicy(policy: Partial<RetryPolicy> | undefined): RetryPolicy {
   const resolved = { ...defaultRetryPolicy, ...policy };
 
-  if (resolved.maxRetries < 0) throw new Error("retry.maxRetries must be at least 0");
-  if (resolved.baseDelayMs < 0) throw new Error("retry.baseDelayMs must be at least 0");
+  if (!Number.isInteger(resolved.maxRetries) || resolved.maxRetries < 0) {
+    throw new Error("retry.maxRetries must be a non-negative integer");
+  }
+  if (!Number.isFinite(resolved.baseDelayMs) || resolved.baseDelayMs < 0) {
+    throw new Error("retry.baseDelayMs must be a finite number at least 0");
+  }
+  if (!Number.isFinite(resolved.maxDelayMs)) {
+    throw new Error("retry.maxDelayMs must be a finite number");
+  }
   if (resolved.maxDelayMs < resolved.baseDelayMs) {
     throw new Error("retry.maxDelayMs must be greater than or equal to retry.baseDelayMs");
   }
-  if (resolved.jitterRatio < 0 || resolved.jitterRatio > 1) {
+  if (
+    !Number.isFinite(resolved.jitterRatio) ||
+    resolved.jitterRatio < 0 ||
+    resolved.jitterRatio > 1
+  ) {
     throw new Error("retry.jitterRatio must be between 0 and 1");
   }
 

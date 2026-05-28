@@ -20,6 +20,11 @@ type AnyGetLogsParameters = GetLogsParameters<
   BlockNumber | BlockTag | undefined
 >;
 
+type ChunkableGetLogsParameters = AnyGetLogsParameters & {
+  fromBlock: bigint | BlockTag;
+  toBlock: bigint | BlockTag;
+};
+
 export type ChunkerActions = {
   getLogs: PublicActions["getLogs"];
 };
@@ -36,15 +41,16 @@ async function getLogsWithChunking(
   parameters: AnyGetLogsParameters | undefined,
   options: ViemChunkerOptions,
 ): Promise<readonly unknown[]> {
-  if (shouldDelegate(parameters)) {
+  if (!isChunkableRange(parameters)) {
     return getLogs(client, parameters);
   }
 
   const fromBlock = await resolveBoundary(client, parameters.fromBlock, "fromBlock");
   let toBlock = await resolveBoundary(client, parameters.toBlock, "toBlock");
+  const finalityBuffer = resolveFinalityBuffer(options.finalityBuffer);
 
-  if (options.finalityBuffer) {
-    toBlock -= options.finalityBuffer;
+  if (finalityBuffer > 0n) {
+    toBlock -= finalityBuffer;
   }
 
   if (toBlock < fromBlock) {
@@ -69,10 +75,12 @@ async function getLogsWithChunking(
   return dedupeLogs(sortLogs(summary.items as readonly SortableLog[]));
 }
 
-function shouldDelegate(parameters: AnyGetLogsParameters | undefined): parameters is undefined {
-  if (!parameters) return true;
-  if ("blockHash" in parameters && parameters.blockHash) return true;
-  return parameters.fromBlock === undefined || parameters.toBlock === undefined;
+function isChunkableRange(
+  parameters: AnyGetLogsParameters | undefined,
+): parameters is ChunkableGetLogsParameters {
+  if (!parameters) return false;
+  if ("blockHash" in parameters && parameters.blockHash) return false;
+  return parameters.fromBlock !== undefined && parameters.toBlock !== undefined;
 }
 
 async function resolveBoundary(
@@ -88,6 +96,12 @@ async function resolveBoundary(
   if (block.number === null)
     throw new Error(`${name} resolved to a pending block without a number`);
   return block.number;
+}
+
+function resolveFinalityBuffer(finalityBuffer: bigint | undefined): bigint {
+  if (finalityBuffer === undefined) return 0n;
+  if (finalityBuffer < 0n) throw new Error("finalityBuffer must be non-negative");
+  return finalityBuffer;
 }
 
 type SortableLog = {
@@ -113,13 +127,24 @@ function dedupeLogs<
   const deduped: T[] = [];
 
   for (const log of logs) {
-    const key = `${log.blockHash ?? ""}:${log.transactionHash ?? ""}:${log.logIndex ?? ""}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const key = logIdentity(log);
+    if (key) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
     deduped.push(log);
   }
 
   return deduped;
+}
+
+function logIdentity(log: {
+  blockHash?: string | null;
+  transactionHash?: string | null;
+  logIndex?: number | null;
+}): string | undefined {
+  if (!log.blockHash || !log.transactionHash || log.logIndex == null) return undefined;
+  return `${log.blockHash}:${log.transactionHash}:${log.logIndex}`;
 }
 
 function compareNullableBigInt(

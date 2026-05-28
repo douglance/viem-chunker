@@ -86,4 +86,20 @@ describe("scanBlockRange", () => {
       kind: "rateLimit",
     } satisfies Partial<ViemChunkerError>);
   });
+
+  it("honors an already-aborted signal before fetching a chunk", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("stop"));
+
+    await expect(
+      collectBlockRange({
+        fromBlock: 1n,
+        toBlock: 1n,
+        signal: controller.signal,
+        fetchChunk: async () => {
+          throw new Error("fetch should not run");
+        },
+      }),
+    ).rejects.toThrow("stop");
+  });
 });
