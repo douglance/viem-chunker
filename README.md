@@ -2,8 +2,7 @@
 
 Chunked, retrying block-range `getLogs` for [viem](https://viem.sh/).
 
-`viem-chunker` has one public way to use it: extend your viem client with
-`chunkerActions()`, then keep calling `client.getLogs(...)`.
+Extend your viem client with `chunkerActions()`, then keep calling `client.getLogs(...)`.
 
 ```ts
 import { chunkerActions } from "viem-chunker";
@@ -24,8 +23,7 @@ const logs = await client.getLogs({
 });
 ```
 
-That is the whole product shape. Users should not have to learn a second API, import a scanner, or
-wrap every call site in retry plumbing.
+That call still looks like viem. It just becomes safer for large historical ranges.
 
 ## Why
 
@@ -45,9 +43,7 @@ normal viem calls.
 
 ## Features
 
-- **One way to use it**: `client.extend(chunkerActions())`, then `client.getLogs(...)`.
-- **Viem-native shape**: no custom client wrapper, no scanner import, no stream abstraction, no
-  framework dependency.
+- **Viem-native extension**: add resilient range behavior with `client.extend(chunkerActions())`.
 - **Range-only interception**: calls with both `fromBlock` and `toBlock` are chunked; `blockHash`
   and non-range calls are delegated to viem unchanged.
 - **Adaptive chunking**: starts with a sensible chunk size, grows after successful chunks, and steps
@@ -62,9 +58,7 @@ normal viem calls.
 - **Finality buffer**: optionally avoid the freshest blocks by scanning only through
   `toBlock - finalityBuffer`.
 - **Abort support**: pass an `AbortSignal` in the extension defaults.
-- **No storage opinion**: the package does not own checkpoints, files, SQLite, Redis, browser
-  storage, or database adapters.
-- **No framework dependency**: no React, wagmi, RxJS, or Node-only runtime APIs.
+- **Runtime portability**: works in modern Node, edge, serverless, and browser-bundled runtimes.
 - **Package-safe output**: dual ESM/CJS build with generated types and clean `publint` validation.
 
 ## Installation
@@ -95,6 +89,124 @@ const logs = await client.getLogs({
 
 The extended client still uses viem's `getLogs` parameters. Existing range-based call sites can stay
 shaped like viem.
+
+## Wagmi
+
+Install the extension when creating your Wagmi config by returning an extended viem client from
+Wagmi's `client` option:
+
+```ts
+import { chunkerActions } from "viem-chunker";
+import { createClient, http } from "viem";
+import { createConfig } from "wagmi";
+import { mainnet, sepolia } from "wagmi/chains";
+
+export const config = createConfig({
+  chains: [mainnet, sepolia],
+  client({ chain }) {
+    return createClient({
+      chain,
+      transport: http(process.env.RPC_URL),
+    }).extend(chunkerActions());
+  },
+});
+```
+
+Code that receives Wagmi's public client can keep using `client.getLogs(...)`:
+
+```ts
+import { getPublicClient } from "@wagmi/core";
+
+const client = getPublicClient(config);
+
+const logs = await client.getLogs({
+  fromBlock: 19_000_000n,
+  toBlock: 19_050_000n,
+});
+```
+
+The same setup works for React apps that read the public client from Wagmi hooks. The important part
+is that the client is extended at config creation, so log range behavior is installed before app code
+uses `getLogs`.
+
+## Use Cases
+
+### Backfills
+
+Fetch historical logs across a large range:
+
+```ts
+const logs = await client.getLogs({
+  address,
+  event,
+  fromBlock: deploymentBlock,
+  toBlock: latestIndexedBlock,
+  strict: true,
+});
+```
+
+### Indexers
+
+Keep scans behind a finality buffer while the chain is still moving:
+
+```ts
+const client = createPublicClient({ chain, transport }).extend(
+  chunkerActions({
+    finalityBuffer: 12n,
+  }),
+);
+
+const logs = await client.getLogs({
+  address,
+  event,
+  fromBlock: lastIndexedBlock + 1n,
+  toBlock: latestObservedBlock,
+});
+```
+
+### Provider-Friendly Range Reads
+
+Start conservatively for providers with strict limits:
+
+```ts
+const client = createPublicClient({ chain, transport }).extend(
+  chunkerActions({
+    chunk: {
+      initialSize: 500n,
+      minSize: 1n,
+      maxSize: 2_000n,
+      growthFactor: 1.5,
+    },
+  }),
+);
+
+const logs = await client.getLogs({
+  fromBlock,
+  toBlock,
+});
+```
+
+### User-Cancelable Requests
+
+Attach an `AbortSignal` at the client boundary:
+
+```ts
+const controller = new AbortController();
+
+const client = createPublicClient({ chain, transport }).extend(
+  chunkerActions({
+    signal: controller.signal,
+  }),
+);
+
+const logsPromise = client.getLogs({
+  fromBlock,
+  toBlock,
+});
+
+controller.abort();
+await logsPromise;
+```
 
 ## Configuration
 
@@ -354,9 +466,9 @@ The runtime code avoids Node-only APIs.
 This project intentionally keeps a small, sharp surface:
 
 - viem remains the client and transport layer
-- `chunkerActions()` is the only public usage path
-- retry and chunking internals stay hidden by default
-- provider quirks live in boundary classification, not user code
+- `chunkerActions()` keeps the library aligned with viem's extension model
+- retry and chunking behavior is configured once at the client boundary
+- provider quirks are handled through boundary classification
 - storage is a caller concern
 - framework integrations can wrap the extended client rather than entering the core package
 
