@@ -1,0 +1,3 @@
+{
+  "entryPoints": ["dist/index.d.ts"]
+}
