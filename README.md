@@ -1,10 +1,9 @@
 # viem-chunker
 
-Chunked, retrying block-range actions for [viem](https://viem.sh/).
+Chunked, retrying block-range `getLogs` for [viem](https://viem.sh/).
 
-`viem-chunker` lets you ask for a large block range the way you normally would with viem, while the
-library handles provider limits, transient failures, retries, and chunk sizing behind the scenes.
-The default experience is deliberately boring:
+`viem-chunker` has one public way to use it: extend your viem client with
+`chunkerActions()`, then keep calling `client.getLogs(...)`.
 
 ```ts
 import { chunkerActions } from "viem-chunker";
@@ -25,7 +24,8 @@ const logs = await client.getLogs({
 });
 ```
 
-That call still looks like viem. It just becomes safer for large historical ranges.
+That is the whole product shape. Users should not have to learn a second API, import a scanner, or
+wrap every call site in retry plumbing.
 
 ## Why
 
@@ -35,32 +35,35 @@ Most RPC providers put practical limits on `eth_getLogs`:
 - maximum response size
 - rate limits
 - timeouts
-- occasional overloaded backends
-- inconsistent transient failures during historical scans
+- overloaded backends
+- temporarily unavailable historical blocks
+- inconsistent provider-specific error messages
 
-The raw viem API is intentionally direct. If you ask for too much, the provider can reject the call.
-`viem-chunker` keeps viem's ergonomics, then adds a mature range-scanning layer for the cases where
-one request is not reliable enough.
+Viem gives you a clear low-level action. If you ask an RPC for too much at once, the provider can
+reject it. `viem-chunker` keeps viem's ergonomics and makes large historical log ranges behave like
+normal viem calls.
 
 ## Features
 
-- **Drop-in viem extension**: use `client.extend(chunkerActions())` and keep calling
-  `client.getLogs(...)`.
-- **Range-only interception**: range-based `getLogs` calls are chunked; `blockHash` and non-range
-  calls are delegated back to viem.
-- **Adaptive chunking**: starts with a sensible chunk size, grows after success, and steps down when
-  providers reject large ranges or payloads.
-- **Retry with backoff**: rate limits, timeouts, overloads, and temporary block availability issues
-  are retried with exponential backoff and jitter.
-- **Typed viem logs**: event and `args` inference survive the wrapper, including strict event args.
-- **Sorted, deduplicated output**: logs are sorted by `blockNumber`, `transactionIndex`, and
+- **One way to use it**: `client.extend(chunkerActions())`, then `client.getLogs(...)`.
+- **Viem-native shape**: no custom client wrapper, no scanner import, no stream abstraction, no
+  framework dependency.
+- **Range-only interception**: calls with both `fromBlock` and `toBlock` are chunked; `blockHash`
+  and non-range calls are delegated to viem unchanged.
+- **Adaptive chunking**: starts with a sensible chunk size, grows after successful chunks, and steps
+  down when providers reject large ranges or payloads.
+- **Retry with backoff**: rate limits, timeouts, overloaded servers, and temporarily unavailable
+  blocks are retried with exponential backoff and jitter.
+- **Provider-pressure classification**: common viem-wrapped JSON-RPC and provider errors are
+  classified at the boundary so retry decisions stay predictable.
+- **Typed viem logs**: event and `args` inference survive the extension, including `strict: true`.
+- **Sorted, deduplicated output**: results are sorted by `blockNumber`, `transactionIndex`, and
   `logIndex`, then deduplicated by stable log identity.
-- **Finality buffer**: optionally scan only up to `toBlock - finalityBuffer`.
-- **Progress and checkpoints**: advanced scanner APIs emit structured progress and checkpoint
-  events so callers can persist resume state in their own storage.
-- **Generic scanner**: the block-range engine is not tied to logs; it can power custom viem actions
-  or non-viem block-range work.
-- **No storage opinion**: no SQLite, Redis, files, browser storage, or database dependency.
+- **Finality buffer**: optionally avoid the freshest blocks by scanning only through
+  `toBlock - finalityBuffer`.
+- **Abort support**: pass an `AbortSignal` in the extension defaults.
+- **No storage opinion**: the package does not own checkpoints, files, SQLite, Redis, browser
+  storage, or database adapters.
 - **No framework dependency**: no React, wagmi, RxJS, or Node-only runtime APIs.
 - **Package-safe output**: dual ESM/CJS build with generated types and clean `publint` validation.
 
@@ -90,20 +93,12 @@ const logs = await client.getLogs({
 });
 ```
 
-The extension overrides `getLogs` on the extended client. You still pass viem-compatible
-`getLogs` parameters. For block-hash lookups, the call is delegated to viem unchanged:
+The extended client still uses viem's `getLogs` parameters. Existing range-based call sites can stay
+shaped like viem.
 
-```ts
-const logs = await client.getLogs({
-  blockHash: "0x...",
-});
-```
+## Configuration
 
-## Default API
-
-### `chunkerActions(defaults?)`
-
-Use this for normal application code.
+Configure behavior once when extending the client:
 
 ```ts
 const client = createPublicClient({ chain, transport }).extend(
@@ -125,7 +120,7 @@ const client = createPublicClient({ chain, transport }).extend(
 );
 ```
 
-After extension:
+Then use the client normally:
 
 ```ts
 const logs = await client.getLogs({
@@ -138,103 +133,46 @@ const logs = await client.getLogs({
 });
 ```
 
-`viem-chunker` only chunks when both `fromBlock` and `toBlock` are present and the call is not a
-`blockHash` lookup.
+## What Gets Chunked
 
-### `getLogsChunked(client, params, options?)`
-
-Use this when you do not want to extend the client:
+`viem-chunker` chunks only range scans:
 
 ```ts
-import { getLogsChunked } from "viem-chunker";
-
-const logs = await getLogsChunked(
-  client,
-  {
-    address,
-    event,
-    fromBlock: 1n,
-    toBlock: 100_000n,
-    strict: true,
-  },
-  {
-    finalityBuffer: 6n,
-  },
-);
-```
-
-This uses the same chunking, retry, sorting, and deduplication behavior as `chunkerActions()`.
-
-## Advanced Scanner API
-
-The generic scanner powers `getLogsChunked`, but it is also exported for custom workflows.
-
-### `collectBlockRange(options)`
-
-Collects all chunk results into a final summary:
-
-```ts
-import { collectBlockRange } from "viem-chunker";
-
-const summary = await collectBlockRange({
+const logs = await client.getLogs({
   fromBlock: 1n,
-  toBlock: 1_000n,
-  fetchChunk: async ({ fromBlock, toBlock, signal }) => {
-    return client.getBlocksInRange({ fromBlock, toBlock, signal });
-  },
+  toBlock: 100_000n,
 });
-
-console.log(summary.items);
-console.log(summary.checkpoint.nextBlock);
 ```
 
-### `scanBlockRange(options)`
-
-Streams lifecycle events as an async generator:
+Calls that are not range scans delegate to viem unchanged:
 
 ```ts
-import { scanBlockRange } from "viem-chunker";
-
-const scanner = scanBlockRange({
-  fromBlock: 1n,
-  toBlock: 10_000n,
-  fetchChunk: async ({ fromBlock, toBlock }) => {
-    return fetchCustomData(fromBlock, toBlock);
-  },
+const logs = await client.getLogs({
+  blockHash: "0x...",
 });
-
-for await (const event of scanner) {
-  if (event.type === "checkpoint") {
-    await saveCheckpoint(event.checkpoint);
-  }
-}
 ```
 
-Events include:
-
-- `chunk:start`
-- `chunk:success`
-- `chunk:retry`
-- `chunk:stepDown`
-- `checkpoint`
-- `progress`
-
-The scanner treats ranges as inclusive. A successful scan covers every block exactly once.
+This keeps the extension narrow. It improves the path that needs chunking without changing unrelated
+viem behavior.
 
 ## Chunking Behavior
 
-Chunking is controlled by `ChunkPolicy`:
+Chunking is controlled by `chunk` defaults:
 
 ```ts
-type ChunkPolicy = {
-  initialSize: bigint;
-  minSize: bigint;
-  maxSize: bigint;
-  growthFactor: number;
-};
+const client = createPublicClient({ chain, transport }).extend(
+  chunkerActions({
+    chunk: {
+      initialSize: 2_000n,
+      minSize: 1n,
+      maxSize: 10_000n,
+      growthFactor: 2,
+    },
+  }),
+);
 ```
 
-Defaults:
+Default policy:
 
 ```ts
 {
@@ -245,31 +183,35 @@ Defaults:
 }
 ```
 
-The scanner:
+The internal scanner:
 
 1. Starts at `initialSize`.
-2. Fetches `[fromBlock, toBlock]` inclusively for the current chunk.
-3. Grows after successful chunks, capped by `maxSize`.
+2. Fetches each block range inclusively.
+3. Grows chunk size after successful chunks.
 4. Shrinks when the provider reports range or payload pressure.
 5. Stops shrinking at `minSize`.
 
-If a single-block range still cannot be fetched after retries, the scan fails with a typed
+If a single-block range still cannot be fetched after retries, the call fails with a typed
 `ViemChunkerError`.
 
 ## Retry Behavior
 
-Retrying is controlled by `RetryPolicy`:
+Retrying is controlled by `retry` defaults:
 
 ```ts
-type RetryPolicy = {
-  maxRetries: number;
-  baseDelayMs: number;
-  maxDelayMs: number;
-  jitterRatio: number;
-};
+const client = createPublicClient({ chain, transport }).extend(
+  chunkerActions({
+    retry: {
+      maxRetries: 4,
+      baseDelayMs: 250,
+      maxDelayMs: 8_000,
+      jitterRatio: 0.2,
+    },
+  }),
+);
 ```
 
-Defaults:
+Default policy:
 
 ```ts
 {
@@ -280,7 +222,7 @@ Defaults:
 }
 ```
 
-The classifier recognizes common provider and viem-wrapped failures:
+Retriable failures include:
 
 - rate limits
 - oversized block ranges
@@ -288,96 +230,66 @@ The classifier recognizes common provider and viem-wrapped failures:
 - timeouts
 - overloaded servers
 - temporarily unavailable blocks
-- fatal input/client errors
 
-Fatal errors fail immediately. Retriable errors are retried or stepped down according to the policy.
+Fatal input or client errors fail immediately.
 
 ## Finality Buffer
 
-`finalityBuffer` lets you avoid the freshest blocks:
+Use `finalityBuffer` to avoid scanning the freshest blocks:
 
 ```ts
+const client = createPublicClient({ chain, transport }).extend(
+  chunkerActions({
+    finalityBuffer: 12n,
+  }),
+);
+
 const logs = await client.getLogs({
   fromBlock: 1_000_000n,
   toBlock: 1_010_000n,
 });
 ```
 
-With:
-
-```ts
-chunkerActions({ finalityBuffer: 12n });
-```
-
-the effective scan ends at:
+The effective scan ends at:
 
 ```ts
 toBlock - 12n;
 ```
 
-This is useful when indexing chains where very recent blocks may be reorganized or inconsistently
-served by RPC infrastructure.
-
-## Checkpoints and Resume
-
-`viem-chunker` emits checkpoints, but does not store them. This keeps the library portable across
-Node, workers, browsers, serverless functions, queues, and indexers.
-
-A checkpoint includes:
-
-```ts
-type ScanCheckpoint = {
-  fromBlock: bigint;
-  toBlock: bigint;
-  nextBlock: bigint;
-  completedRanges: readonly BlockRange[];
-};
-```
-
-To resume, persist `checkpoint.nextBlock`, then start the next scan from that block:
-
-```ts
-const checkpoint = await loadCheckpoint();
-
-await collectBlockRange({
-  fromBlock: checkpoint?.nextBlock ?? startBlock,
-  toBlock,
-  fetchChunk,
-  onEvent: async (event) => {
-    if (event.type === "checkpoint") {
-      await saveCheckpoint(event.checkpoint);
-    }
-  },
-});
-```
+This is useful when indexing chains where recent blocks may be reorganized or inconsistently served
+by RPC infrastructure.
 
 ## Abort Support
 
-Pass an `AbortSignal` to stop a scan:
+Pass an `AbortSignal` when extending the client:
 
 ```ts
 const controller = new AbortController();
 
-const promise = getLogsChunked(client, params, {
-  signal: controller.signal,
+const client = createPublicClient({ chain, transport }).extend(
+  chunkerActions({
+    signal: controller.signal,
+  }),
+);
+
+const promise = client.getLogs({
+  fromBlock,
+  toBlock,
 });
 
 controller.abort();
 await promise;
 ```
 
-Abort signals are passed through to custom scanner `fetchChunk` calls.
-
 ## Error Handling
 
-`ViemChunkerError` includes:
-
-- `kind`
-- `range`
-- `cause`
+`ViemChunkerError` is exported for callers that want structured handling while still using the
+extended `client.getLogs(...)` path:
 
 ```ts
-import { ViemChunkerError } from "viem-chunker";
+import { ViemChunkerError, chunkerActions } from "viem-chunker";
+
+const client = createPublicClient({ chain, transport }).extend(chunkerActions());
 
 try {
   await client.getLogs({ fromBlock, toBlock });
@@ -388,19 +300,22 @@ try {
 }
 ```
 
-You can classify provider errors directly:
+The error includes:
 
-```ts
-import { classifyRpcRangeError } from "viem-chunker";
-
-const kind = classifyRpcRangeError(error);
-```
+- `kind`
+- `range`
+- `cause`
 
 ## TypeScript
 
-The viem adapter preserves event inference:
+The extension preserves viem event inference:
 
 ```ts
+import { chunkerActions } from "viem-chunker";
+import { createPublicClient, http, parseAbiItem } from "viem";
+
+const client = createPublicClient({ chain, transport: http() }).extend(chunkerActions());
+
 const event = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
 
 const logs = await client.getLogs({
@@ -439,11 +354,11 @@ The runtime code avoids Node-only APIs.
 This project intentionally keeps a small, sharp surface:
 
 - viem remains the client and transport layer
-- `chunkerActions()` is the default user experience
-- scanner internals are available, but not required
-- provider quirks live in error classification, not in the scanner loop
+- `chunkerActions()` is the only public usage path
+- retry and chunking internals stay hidden by default
+- provider quirks live in boundary classification, not user code
 - storage is a caller concern
-- framework integrations can be built on top without entering the core package
+- framework integrations can wrap the extended client rather than entering the core package
 
 ## Development
 

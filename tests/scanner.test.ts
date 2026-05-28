@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { collectBlockRange, scanBlockRange, type ViemChunkerError } from "../src/index.js";
+import type { ViemChunkerError } from "../src/errors.js";
+import { collectBlockRange, scanBlockRange } from "../src/scanner.js";
 
 describe("scanBlockRange", () => {
   it("covers an inclusive range exactly once", async () => {

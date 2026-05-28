@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyRpcRangeError } from "../src/index.js";
+import { classifyRpcRangeError } from "../src/errors.js";
 
 describe("classifyRpcRangeError", () => {
   it.each([

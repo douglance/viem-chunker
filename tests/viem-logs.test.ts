@@ -1,6 +1,6 @@
 import { createClient, custom } from "viem";
 import { describe, expect, it } from "vitest";
-import { chunkerActions, getLogsChunked } from "../src/index.js";
+import { chunkerActions } from "../src/index.js";
 
 const address = "0x0000000000000000000000000000000000000001" as const;
 const blockHash = "0x000000000000000000000000000000000000000000000000000000000000000a" as const;
@@ -28,7 +28,7 @@ describe("viem getLogs adapter", () => {
     expect(logs.map((log) => log.blockNumber)).toEqual([1n, 2n]);
   });
 
-  it("uses chunking and step-down when called directly", async () => {
+  it("uses chunking and step-down through the extended action", async () => {
     const ranges: unknown[] = [];
     const client = createClient({
       transport: custom(
@@ -45,13 +45,13 @@ describe("viem getLogs adapter", () => {
         },
         { retryCount: 0 },
       ),
-    });
-
-    const logs = await getLogsChunked(
-      client,
-      { address, fromBlock: 1n, toBlock: 4n },
-      { chunk: { initialSize: 4n, minSize: 1n, maxSize: 4n, growthFactor: 1 } },
+    }).extend(
+      chunkerActions({
+        chunk: { initialSize: 4n, minSize: 1n, maxSize: 4n, growthFactor: 1 },
+      }),
     );
+
+    const logs = await client.getLogs({ address, fromBlock: 1n, toBlock: 4n });
 
     expect(ranges).toHaveLength(3);
     expect(logs).toHaveLength(2);

@@ -5,7 +5,6 @@ import type {
   Chain,
   Client,
   GetLogsParameters,
-  GetLogsReturnType,
   PublicActions,
   Transport,
 } from "viem";
@@ -30,25 +29,6 @@ export function chunkerActions(defaults: ChunkerActionDefaults = {}) {
     getLogs: ((parameters) =>
       getLogsWithChunking(client, parameters, defaults)) as PublicActions["getLogs"],
   });
-}
-
-export async function getLogsChunked<
-  const abiEvent extends AbiEvent | undefined = undefined,
-  const abiEvents extends
-    | readonly AbiEvent[]
-    | readonly unknown[]
-    | undefined = abiEvent extends AbiEvent ? [abiEvent] : undefined,
-  strict extends boolean | undefined = undefined,
-  fromBlock extends BlockNumber | BlockTag | undefined = undefined,
-  toBlock extends BlockNumber | BlockTag | undefined = undefined,
->(
-  client: Client<Transport, Chain | undefined>,
-  parameters?: GetLogsParameters<abiEvent, abiEvents, strict, fromBlock, toBlock>,
-  options: ViemChunkerOptions = {},
-): Promise<GetLogsReturnType<abiEvent, abiEvents, strict, fromBlock, toBlock>> {
-  return getLogsWithChunking(client, parameters, options) as Promise<
-    GetLogsReturnType<abiEvent, abiEvents, strict, fromBlock, toBlock>
-  >;
 }
 
 async function getLogsWithChunking(
