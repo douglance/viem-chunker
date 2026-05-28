@@ -38,7 +38,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:types": "tsd",
-    "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm test:types && pnpm build && publint"
+    "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm test:types && publint"
   },
   "peerDependencies": {
     "viem": ">=2.51.3 <3"
