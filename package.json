@@ -1,9 +1,13 @@
 {
   "name": "viem-chunker",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Chunked, retrying block range actions for viem clients.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/douglance/viem-chunker.git"
+  },
   "packageManager": "pnpm@11.2.2",
   "sideEffects": false,
   "engines": {
